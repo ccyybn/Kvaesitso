@@ -102,7 +102,7 @@ fun IconsSettingsScreen() {
                 SliderPreference(
                     title = stringResource(R.string.preference_grid_icon_size),
                     value = grid.iconSize,
-                    step = 8,
+                    step = 2,
                     min = 32,
                     max = 64,
                     onValueChanged = {
