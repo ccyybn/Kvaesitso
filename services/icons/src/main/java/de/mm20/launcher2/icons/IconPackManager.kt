@@ -6,7 +6,9 @@ import android.content.pm.PackageManager
 import android.content.res.Resources
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.PorterDuff
 import android.graphics.PorterDuffXfermode
 import android.graphics.Rect
@@ -31,6 +33,9 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
+import androidx.core.graphics.createBitmap
+import androidx.core.graphics.drawable.toDrawable
+import androidx.core.graphics.withClip
 
 
 class IconPackManager(
@@ -330,15 +335,100 @@ class IconPackManager(
             }
 
             else -> {
+
+                val isPixelIconPack = icon.iconPack == "com.ciaostudio.pixeliconpack"
+                val skipCircleClipNames = setOf(
+                    "calculator5",
+                    "calculator6",
+                    "calculator7",
+                    "calculator8",
+                )
+                val skipCircleClip = isPixelIconPack && icon.drawable in skipCircleClipNames
+                Log.d(
+                    "MM20",
+                    "getIconPackStaticIcon: iconName=${icon.drawable}, iconPack=${icon.iconPack}, skipCircleClip=$skipCircleClip"
+                )
+                val targetDrawable = if (skipCircleClip) {
+                    stripLowAlphaPixels(drawable)
+                } else {
+                    clipDrawableToCircle(drawable)
+                }
                 StaticLauncherIcon(
                     foregroundLayer = StaticIconLayer(
-                        icon = drawable,
-                        scale = 1f
+                        icon = targetDrawable,
+                        scale = if (isPixelIconPack) 1.084f else 1f
                     ),
                     backgroundLayer = TransparentLayer
                 )
             }
         }
+    }
+
+    private fun clipDrawableToCircle(drawable: Drawable): Drawable {
+        val size = minOf(drawable.intrinsicWidth, drawable.intrinsicHeight)
+        val output = createBitmap(size, size)
+        val canvas = Canvas(output)
+
+        val center = size / 2f
+        val radius = center - 8f
+        val path = Path().apply {
+            addCircle(center, center, radius, Path.Direction.CW)
+        }
+
+        canvas.withClip(path) {
+            drawable.setBounds(0, 0, size, size)
+            drawable.draw(this)
+        }
+
+        return output.toDrawable(context.resources)
+    }
+
+    private fun stripLowAlphaPixels(
+        drawable: Drawable,
+        alphaThreshold: Int = 66,
+        fallbackSize: Int = 192,
+    ): Drawable {
+        val threshold = alphaThreshold.coerceIn(0, 255)
+        val baseBitmap = if (drawable is BitmapDrawable && drawable.bitmap != null) {
+            drawable.bitmap
+        } else {
+            val width = drawable.intrinsicWidth.takeIf { it > 0 } ?: fallbackSize
+            val height = drawable.intrinsicHeight.takeIf { it > 0 } ?: fallbackSize
+            drawable.toBitmap(width = width, height = height, config = Bitmap.Config.ARGB_8888)
+        }
+
+        val width = baseBitmap.width
+        val height = baseBitmap.height
+        if (width <= 0 || height <= 0) return drawable
+
+        val mutableBitmap =
+            if (baseBitmap.isMutable && baseBitmap.config == Bitmap.Config.ARGB_8888) {
+                baseBitmap
+            } else {
+                baseBitmap.copy(Bitmap.Config.ARGB_8888, true)
+            }
+
+        val pixels = IntArray(width * height)
+        mutableBitmap.getPixels(pixels, 0, width, 0, 0, width, height)
+
+        var modified = false
+        for (i in pixels.indices) {
+            val pixel = pixels[i]
+            val alpha = (pixel ushr 24) and 0xFF
+            if (alpha < threshold) {
+                if (pixel != Color.TRANSPARENT) {
+                    pixels[i] = Color.TRANSPARENT
+                    modified = true
+                }
+            }
+        }
+
+        if (!modified) {
+            return drawable
+        }
+
+        mutableBitmap.setPixels(pixels, 0, width, 0, 0, width, height)
+        return mutableBitmap.toDrawable(context.resources)
     }
 
     private fun getIconPackCalendarIcon(
